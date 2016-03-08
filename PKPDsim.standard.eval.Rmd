@@ -120,43 +120,51 @@ ggplot(dat5, aes(x=t, y=y, group=id, colour=factor(id))) +
 
 ### Model with covariates.
 
-#### N/A - AFAIK author has not implimented meaningful covariate modeling
-What we could do is specify the covariate as a parameter, and then attatch a CV to it using omega (basically treat it like CL, V, KA, K12, etc).  I think this is against the spirit of covariates and will not pursue this route unless asked
-
-Covariate models must all be specified in CPP code! - complication
-
-**cpp does NOT have an exponential operator.** This makes it very difficult to impliment allometry!!!  I do not think we can load libraries inside of the "code" arg: we need to use {c++} pow() which is not standard. 
+#### Updated - **Meaningful** definition of covariate is redefined based on better understanding the end goal of the project.  We want to feed covariates for a *single clinical patient* **NOT** *pop pk/specify many individual covariates or a pdf for a large pop*
 
 ```{r}
 
-
-##CrCl   <- new_covariate(value = 86.1)
-
-
-                                    
-##pk4 <- new_ode_model(code = '             
-#                        dAdt[1] = -(0.67 * CRCL)/(V) * A[1] + rate
-#                    ',
-#                     covariates = list("CRCL" = CrCl),
-#                     cpp_show_code = TRUE)
-
-##dat6 <- sim_ode (ode = "pk4",
-#                par = p,
-#                n_ind = 50,
-#                omega = cv_to_omega(par_cv = list(V = .7, CrCl =           .6),      parameters = list(CL = 'CL', V = 'V', CrCl =                           'CRCL')),
-#                covariates = list('CRCL' = CrCl),
-#                regimen = r1 )
+##patient params
+age  <- new_covariate(value = 80)
+CrCl <- new_covariate(value = 80)
+wt <- new_covariate(value = 70)
+#############################
 
 
-##ggplot(dat6, aes(x=t, y=y, group=id, colour=factor(id))) +
-#  scale_colour_discrete(guide=FALSE) +
-#  geom_line() +
-#  facet_wrap(~comp, scales = 'free') +
-#  theme_empty()
+covmod <- new_ode_model(code = "
+                        dAdt[1] = -(((0.67*CrCl + pow(age, 0.24))*0.006*wt)/(V)) * A[1] + rate
+                        conc = A[1]/V
+                            ",
+                     covariates = list("CrCl" = CrCl, "age" = age, 'wt' = wt),
+                     cpp_show_code = TRUE,
+                     obs = list (cmt = 1, scale = "V"))
+
+
+
+
+dat6 <- sim_ode (ode = "pk4",
+                par = p, 
+                obs_step_size = .025,  ##### need this, otherwise bolus peaks aren't included
+               covariates = list("CrCl" = CrCl, "age" = age, 'wt' = wt),
+              'regimen' = r1)
+
+
+ggplot(dat, aes(x=t, y=y)) +
+  scale_colour_discrete(guide=FALSE) +
+  geom_line() +
+  facet_wrap(~comp, scales = 'free') +
+  theme_empty()
+                                  
 ```
 
 ## General thoughts - comment?
 -Better dosing regimen specification - no clean way of simultaneously simulating several.
--Built in library is very small (4).  
--We could enhance the shiny app to allow model parameters to be inputted and selected - much improved over phoenix, and useful for PK students!
--I could probably replicate this library in python - would need lots of help.  Cython >> rcpp IMO
+-Built in library is very small (4).
+
+## post-hoc thoughts after doing mrgsolve
+- mrgsolve allows on-the-fly non- persistent changes in parameters.  Useful for speed in a clinical scenario.  Clinicians want to see results from several different 
+
+## Potential side projects 
+- Replicate in Python/Cython
+- Push more models/drugs in library (will coincide with our objectives maybe)
+- Make shiny app more suited for PharmD PK class
