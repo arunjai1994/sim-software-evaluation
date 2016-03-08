@@ -132,5 +132,51 @@ popPK <- modPOPPK %>% ev(maint) %>% omat(cov) %>% mrgsim(nid = 100, end = 100) %
 
 ggplot(popPK, aes(x=time, y = DV, group = ID)) + geom_line()
 ```
-
 #Part 5
+mrgsolve does not have a covariate class.  Not a big deal, because you may impliment `idata()`, to modify individual parameters.  we can determine these parameters by calculating outside of CPP
+
+AFAIK the covariate class in PKPDsim has no extra functionality besides calling it a covariate class and separating from parameters.  There looks to be more functionality in the pipeline but ron keiser has commented out several functions
+
+```{r}
+
+AGE = 61.1
+CRCL = 86.1/70 ##in ml/min/kg
+WT = 70 ##kg
+
+ptCL <- (0.67*CRCL + AGE^0.24)*70*0.006
+
+ptcov <- data.frame(CL = ptCL,V = 59)  ### 59 taken from V from model 
+
+covariates <- mod %>% idata_set(ptcov) %>% ev(maint) %>% mrgsim(end = 72) %>% as.data.frame
+
+ggplot(covariates, aes(x=time, y = CP, group = ID, color = factor(ID))) + geom_line()
+
+
+```
+
+#Extra Fun!
+(This is what I originally thought we were going for with covariates)
+popPK w/ covariates (assume no covariation between V and CL, I.E. Cov Matrix is a diagnal matrix)
+Population average CL/Age in study: 61.1(sd = 16.3) y, CL = 86.1(sd = 55.1) mL/min
+```{r}
+
+##generate a normally distributed, random generated patient set
+CRCL <- rnorm(10,86.1,55.1)
+AGE <- rnorm(10, 61.1, 16.3)
+V <- rnorm(10, 59, 13.5)  ### sd extrapolated from CV = 22.83% and mean of 59 from model 
+popcov <- data.frame(V, CRCL, AGE, ID = seq(1:10))
+
+
+###I have to go back to check this equation. 99% sure i screwed something up.  Jimmied to give ballpark correct clearances
+
+popcov <- popcov %>% dplyr::mutate(CL = (0.67*(CRCL/70) + AGE^0.24)*70*0.06)
+
+covariates <- mod %>% idata_set(popcov) %>% ev(maint) %>% mrgsim(end = 72) %>% as.data.frame
+
+ggplot(covariates, aes(x=time, y = CP, group = ID, color = factor(ID))) + geom_line()
+```
+
+
+###Discussion
+- mrgsolve is SUBSTANTIALLY faster than PKPDsim.  I simulated 10000 and couldn't get to 5 mississippi. plotting a different story 
+- it is equally as easy to build parameter values (based on covariates or popPK) outside of cpp and feed them simultaneously into mrgsim (see #5 and "extra").  This may get slower if we have a big covariate matrix 
