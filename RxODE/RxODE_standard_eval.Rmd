@@ -63,24 +63,57 @@ ggplot(as.data.frame(sim), aes(x = time, y = CC )) + geom_line()
 * Any time you want to remove dosing or sampling from a eventTable, you must reinitialize eventTable
 
 ## Dosing regimen (infusion)
-#### Build pseudo infusion (close enough)
+#### Build infusion
 ```{r}
 inf <- eventTable(amount.units = 'mg')
-inf$add.dosing(dose = 1, nbr.doses = 1000, dosing.interval = 0.001)
+inf$add.dosing(dose = 1000, nbr.doses = 1, dosing.interval = 12, rate = 1000)
 
 inf$add.sampling(seq(0,60,0.001))
 ```
 
-## Dosing regimen (IV inf) single patient: 1g q12h 2 hour infusion 
+#### Dosing regimen (IV inf) single patient: 1g q12h 2 hour infusion 
 ```{r}
 infsim <- mod$solve(theta, inf, inits) %>% as.data.frame()
 
 ggplot(infsim, aes(x = time, y = CC)) + geom_line()
 ```
 
-This is not set up to do CI.  One way to approximate an infusion is by using [approachingly] infintesimal small boluses.  Thats what I did here - 1000 boluses of 1mg, spread out by 1hr/1000.  
-Major practical problem - you must be sampling every time you adminster a bolus, so above sim had to generate 1.4 megs of data.
-IMO lack of practical infusion ability is a game-ender.  Most drugs of PK relevance are administered IVPB or CI
+## Multiple dosing strategies: 1g q12, 0.5g q6h
+####Build new event 
+```{r}
+
+tev <- eventTable(amount.units = 'mg')
+
+tev$add.dosing(dose = 1000, nbr.doses = 10, dosing.interval = 12, dosing.to = 1)
+
+tev$add.dosing(dose = 500, nbr.doses = 20, dosing.interval = 6, dosing.to = 2)
+
+
+tev$add.sampling(seq(0,120,0.1))
+
+
+
+twodoses <- mod$solve(theta, tev, inits) %>% as.data.frame()
+
+ggplot(twodoses, aes(x = time, y = CC)) + geom_line()
+
+
+
+
+
+
+
+
+
+
+
+
+tev$add.dosing
+
+
+ + 7. Population PK - CV of params: CL 30.13%; V1 22.83%
+ + 8. Correlates: CL(ml/min/kg) = 0.67 * CrCl + AGE^.24; V1 invariant
+ + 9. Population average CL/Age in study: 61.1(sd = 16.3) y, CL = 86.1(sd = 55.1) mL/min
 
 
 
