@@ -1,0 +1,6 @@
+
+  # Can make comments here
+  # 
+  CC = centr/V;
+  d/dt(centr) = -(CL/V)*centr;
+   

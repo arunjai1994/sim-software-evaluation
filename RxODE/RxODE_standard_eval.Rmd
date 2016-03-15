@@ -1,0 +1,97 @@
+---
+title: "RxODE_standard_eval"
+author: "Justin Penzenstadler"
+date: "March 15, 2016"
+output: html_document
+---
+
+```{r}
+library(RxODE)
+library(ggplot2)
+library(dplyr)
+```
+
+####General thoughts after reading viginette, examples, etc
+*Very object oriented package.  Very few (4) functions, several methods. It can be pretty useful in housekeeping - maybe thats just me b/c I come from python. 
+*Unlike mrgsolve we do not have to build a cpp file and this will easily take a char string.  
+  +PKPDsim 1st place with model library.  If we don't go with PKPDsim we will have to build our own library.
+*However, if we are making deployable apps I think speed will win out.  PKPDsim was much slower than mrgsolve, lets see about this one.  
+
+* Found issue - RxODE builds a folder in the wd(). Naive run causes a "no such file or directory error", but folder appears.  Second run gives no error.  I believe it is a latency issue.  It can be solved by running twice.  
+
+##Set Up 
+####Build the Model string in CPP 
+```{r}
+
+modstring <- 
+  '
+  # Can make comments here
+  # 
+  CC = centr/V;
+  d/dt(centr) = -(CL/V)*centr;
+  '
+mod <- RxODE(model = modstring, modName = "mod")
+```
+
+####Initialize the variables
+
+```{r}
+##every parameter and state variable must be specified.  
+theta <- c(CL = 5, V = 60)
+inits <- c(centr = 0)
+
+##eventtable() generates a dosing object, then method $add.dosing is used to modify 
+ev <- eventTable(amount.units = 'mg')
+ev$add.dosing( dose = 1000, nbr.doses = 12, dosing.interval = 12)
+
+###need to specify sampling time!
+ev$add.sampling(seq(0,60,0.1))
+```
+
+## Dosing regimen (bolus) single patient : 1g q12h
+#### Simulate and Plot
+
+```{r}
+sim <- mod$solve(theta, ev, inits)
+
+ggplot(as.data.frame(sim), aes(x = time, y = CC )) + geom_line()
+```
+
+####General Comments: 
+* sampling and clearance must be same units.
+* Fast
+* Any time you want to remove dosing or sampling from a eventTable, you must reinitialize eventTable
+
+## Dosing regimen (infusion)
+#### Build pseudo infusion (close enough)
+```{r}
+inf <- eventTable(amount.units = 'mg')
+inf$add.dosing(dose = 1, nbr.doses = 1000, dosing.interval = 0.001)
+
+inf$add.sampling(seq(0,60,0.001))
+```
+
+## Dosing regimen (IV inf) single patient: 1g q12h 2 hour infusion 
+```{r}
+infsim <- mod$solve(theta, inf, inits) %>% as.data.frame()
+
+ggplot(infsim, aes(x = time, y = CC)) + geom_line()
+```
+
+This is not set up to do CI.  One way to approximate an infusion is by using [approachingly] infintesimal small boluses.  Thats what I did here - 1000 boluses of 1mg, spread out by 1hr/1000.  
+Major practical problem - you must be sampling every time you adminster a bolus, so above sim had to generate 1.4 megs of data.
+IMO lack of practical infusion ability is a game-ender.  Most drugs of PK relevance are administered IVPB or CI
+
+
+
+
+
+
+
+
+
+
+
+
+
+
