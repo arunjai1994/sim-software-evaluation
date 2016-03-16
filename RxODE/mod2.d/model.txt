@@ -1,0 +1,5 @@
+
+#
+d/dt(centr) = -((WT*(0.67*CRCL + pow(age, 0.24)))/(600*V))*centr;
+CC = centr/V;
+ 

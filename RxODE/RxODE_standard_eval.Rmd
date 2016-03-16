@@ -1,0 +1,191 @@
+---
+title: "RxODE_standard_eval"
+author: "Justin Penzenstadler"
+date: "March 15, 2016"
+output: html_document
+---
+
+```{r}
+library(RxODE)
+library(ggplot2)
+library(dplyr)
+```
+
+####General thoughts 
+* **Lets make a standard PopPK test subject number (i say 10000) and time the simulators!!!!**
+*Very object oriented package.  Very few (4) functions, several methods. It can be pretty useful in housekeeping - maybe thats just me b/c I come from python. 
+*Unlike mrgsolve we do not have to build a cpp file and this will easily take a char string.  I had no problems with syntax
+  +PKPDsim 1st place with model library.  If we don't go with PKPDsim we will have to build our own library.
+*No built in Pop PK 
+*However, if we are making deployable apps I think speed will win out.  PKPDsim was much slower than mrgsolve, lets see about this one.  
+
+* Found issue - RxODE builds a folder in the wd(). Naive run causes a "no such file or directory error", but folder appears.  Second run gives no error.  I believe it is a latency issue.  It can be solved by running RxODE twice.  
+
+##Set Up 
+####Build the Model string in CPP 
+```{r}
+
+modstring <- 
+  '
+  # Can make comments here
+  # 
+  CC = centr/V;
+  d/dt(centr) = -(CL/V)*centr;
+  '
+mod <- RxODE(model = modstring, modName = "mod")
+```
+
+####Initialize the variables
+
+```{r}
+##every parameter and state variable must be specified.  
+theta <- c(CL = 5, V = 60)
+inits <- c(centr = 0)
+
+##eventtable() generates a dosing object, then method $add.dosing is used to modify 
+ev <- eventTable(amount.units = 'mg')
+ev$add.dosing( dose = 1000, nbr.doses = 12, dosing.interval = 12)
+
+###need to specify sampling time!
+ev$add.sampling(seq(0,60,0.1))
+```
+
+## Dosing regimen (bolus) single patient : 1g q12h
+#### Simulate and Plot
+
+```{r}
+sim <- mod$solve(theta, ev, inits)
+
+ggplot(as.data.frame(sim), aes(x = time, y = CC )) + geom_line()
+```
+
+####General Comments: 
+* sampling and clearance must be same units.
+* Fast
+* Any time you want to remove dosing or sampling from a eventTable, you must reinitialize eventTable
+
+## Dosing regimen (infusion)
+#### Build infusion
+```{r}
+inf <- eventTable(amount.units = 'mg')
+inf$add.dosing(dose = 1000, nbr.doses = 10, dosing.interval = 12, rate = 1000)
+
+inf$add.sampling(seq(0,60,0.1))
+```
+
+#### Dosing regimen (IV inf) single patient: 1g q12h 2 hour infusion 
+```{r}
+infsim <- mod$solve(theta, inf, inits) %>% as.data.frame()
+
+ggplot(infsim, aes(x = time, y = CC)) + geom_line()
+```
+
+## Multiple dosing strategies: 1g q12, 0.5g q6h
+####Build two events
+```{r}
+
+q6h <- eventTable(amount.units = 'mg')
+q6h$add.dosing(dose = 500, nbr.doses = 20, dosing.interval = 6)
+q6h$add.sampling(seq(0,60,0.1))
+```
+
+####Simulate
+```{r}
+modq6h <- mod$solve(theta, q6h, inits) %>% as.data.frame() 
+modq6h$ID <- 2   ### allows grouping in ggplot
+q12vsq6h <- bind_rows(modq6h, infsim)
+
+ggplot(q12vsq6h, aes(x = time, y = CC, group = ID)) + geom_line()
+```
+
+## PopPK
+#### Specify new theta
+
+Params(extrapolated): CL = 5.1L/hr; v1 = 59.86 L
+Population PK - CV of params: CL 30.13%; V1 22.83%
+```{r}
+poptheta = data.frame(CL = rnorm(10000, 5.1, .3013*5.1), V = rnorm(100, 59.86, .2283*59.86))
+inits <- c(centr = 0)
+```
+
+* PKPDsim has the best set up for PopPK.
+* PKPDsim and mrgsolve have population parameter variation functionality.  This one does not, you must build outside of R.
+* This is also very convenient set up if we want to specify our own population.  We could also build covariates into our model and specify here too, similarly to mrgsolve.
+
+#### Loop
+*RxODE is the only simulator that requires looping outside of compiled code.
+*still lighting fast. time trial in next chunk
+
+```{r}
+
+nsub <- as.numeric(nrow(poptheta))
+nobs <- ev$get.nobs()
+cp.all <- matrix(NA, nobs, nsub)  
+for (i in 1:nsub)
+{
+    theta <- poptheta[i,]
+    x <- mod$solve(theta, ev, inits=inits)
+    cp.all[, i] <- x[, "CC"]
+}
+
+```
+
+####Making a function, time testing
+```{r}
+
+popPKsim <- function(thetas, inits, ev, mod){
+  nsub <- as.numeric(nrow(thetas))
+  nobs <- ev$get.nobs()
+  cp.all <- matrix(NA, nobs, nsub)  
+  for (i in 1:nsub){
+    theta <- thetas[i,]
+    x <- mod$solve(theta, ev, inits=inits)
+    cp.all[, i] <- x[, "CC"]
+  }
+  return(cp.all)
+}
+
+
+time <- proc.time()
+
+sim <- popPKsim(poptheta, inits, ev, mod)
+
+proc.time() - time
+
+##4.88 seconds for 10k simulations
+```
+
+##Covariate modeling
+Nothing special.  Similar to mrgsolve, this does not have an specific class for covariate (though PKPDsim has questionable functionality), nor does it have a function like `mrgsolve::idata()' to pipe updated params.  
+#####Options 
+*Compute patient specific parameters outside of r, and then rebuild param list with results.
+*Incude parameter/covariate function inside compiled code, and specify patient specific parameters.
+####Rebuild model with covariate inside compiled code
+
+```{r}
+
+covmodstring <- 
+  '
+  # Can make comments here
+  # 
+  CC = centr/V;
+  d/dt(centr) = -((WT*(0.67*CRCL + pow(age, 0.24)))/(600*V))*centr;
+  '
+mod2 <- RxODE(model = covmodstring, modName = "mod2")
+```
+
+####Rebuild theta, simulate, plot
+```{r}
+thetacov = c(CRCL = 86.7, age = 61.1, V = 60, WT = 70)
+
+
+covsim <- mod2$solve(thetacov, inf, inits) %>% as.data.frame()
+
+ggplot(covsim, aes(x = time, y = CC)) + geom_line()
+```
+
+#####JAP need to address Correlate eqn - gives clearances that are too large.
+
+Correlates: CL(ml/min/kg) = 0.67 * CrCl + AGE^.24; V1 invariant
+Population average CL/Age in study: 61.1(sd = 16.3) y, CL = 86.1(sd   = 55.1) mL/min
+
