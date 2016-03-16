@@ -11,15 +11,15 @@ library(ggplot2)
 library(dplyr)
 ```
 
-####General thoughts after reading viginette, examples, etc
-* **Lets make a standard PopPK test subject number (i say 1000) and time the simulators!!!!**
+####General thoughts 
+* **Lets make a standard PopPK test subject number (i say 10000) and time the simulators!!!!**
 *Very object oriented package.  Very few (4) functions, several methods. It can be pretty useful in housekeeping - maybe thats just me b/c I come from python. 
-*Unlike mrgsolve we do not have to build a cpp file and this will easily take a char string.  
+*Unlike mrgsolve we do not have to build a cpp file and this will easily take a char string.  I had no problems with syntax
   +PKPDsim 1st place with model library.  If we don't go with PKPDsim we will have to build our own library.
 *No built in Pop PK 
 *However, if we are making deployable apps I think speed will win out.  PKPDsim was much slower than mrgsolve, lets see about this one.  
 
-* Found issue - RxODE builds a folder in the wd(). Naive run causes a "no such file or directory error", but folder appears.  Second run gives no error.  I believe it is a latency issue.  It can be solved by running twice.  
+* Found issue - RxODE builds a folder in the wd(). Naive run causes a "no such file or directory error", but folder appears.  Second run gives no error.  I believe it is a latency issue.  It can be solved by running RxODE twice.  
 
 ##Set Up 
 ####Build the Model string in CPP 
@@ -113,8 +113,8 @@ inits <- c(centr = 0)
 * This is also very convenient set up if we want to specify our own population.  We could also build covariates into our model and specify here too, similarly to mrgsolve.
 
 #### Loop
-*RxODE is the only thing that requires looping outside of compiled code.
-*lighting fast.  5 mississippi for 10k subjects (i'll test exactly when I have time lol )
+*RxODE is the only simulator that requires looping outside of compiled code.
+*still lighting fast. time trial in next chunk
 
 ```{r}
 
@@ -156,19 +156,36 @@ proc.time() - time
 ```
 
 ##Covariate modeling
-Nothing special.  Does not have an specific PKPDsim class for covariate (though it PKPDsim has questionable functionality), nor does it have a function like `mrgsolve::idata()' to pipe updated params.  
+Nothing special.  Similar to mrgsolve, this does not have an specific class for covariate (though PKPDsim has questionable functionality), nor does it have a function like `mrgsolve::idata()' to pipe updated params.  
 #####Options 
 *Compute patient specific parameters outside of r, and then rebuild param list with results.
 *Incude parameter/covariate function inside compiled code, and specify patient specific parameters.
+####Rebuild model with covariate inside compiled code
+
 ```{r}
+
 covmodstring <- 
   '
   # Can make comments here
   # 
   CC = centr/V;
-  d/dt(centr) = -(CL/V)*centr;
+  d/dt(centr) = -((WT*(0.67*CRCL + pow(age, 0.24)))/(600*V))*centr;
   '
-mod <- RxODE(model = modstring, modName = "mod")
+mod2 <- RxODE(model = covmodstring, modName = "mod2")
+```
+
+####Rebuild theta, simulate, plot
+```{r}
+thetacov = c(CRCL = 86.7, age = 61.1, V = 60, WT = 70)
 
 
+covsim <- mod2$solve(thetacov, inf, inits) %>% as.data.frame()
+
+ggplot(covsim, aes(x = time, y = CC)) + geom_line()
+```
+
+#####JAP need to address Correlate eqn - gives clearances that are too large.
+
+Correlates: CL(ml/min/kg) = 0.67 * CrCl + AGE^.24; V1 invariant
+Population average CL/Age in study: 61.1(sd = 16.3) y, CL = 86.1(sd   = 55.1) mL/min
 
